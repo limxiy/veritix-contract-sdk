@@ -166,3 +166,17 @@ export interface TransactionResult {
   /** Whether the transaction was successful */
   successful: boolean;
 }
+
+/**
+ * Result of a dry-run simulation via {@link VeriTixClient.simulate}.
+ */
+export interface SimulationResult {
+  /** Whether the simulated call would succeed */
+  success: boolean;
+  /** The decoded return value from the contract (if successful) */
+  returnValue: unknown;
+  /** Estimated transaction fee in stroops */
+  estimatedFee: string;
+  /** Error message if the simulation failed */
+  error?: string;
+}

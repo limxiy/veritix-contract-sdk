@@ -75,12 +75,21 @@ describe('VeriTixClient', () => {
   });
 
   // -------------------------------------------------------------------------
-  // connect() — stub guard
+  // connect()
   // -------------------------------------------------------------------------
 
   describe('connect()', () => {
-    it('throws "not implemented" until connect() is built out', async () => {
-      await expect(client.connect()).rejects.toThrow('not implemented');
+    it('resolves to a ledger sequence number', async () => {
+      // Mock the RPC server so no real network call is made
+      const { SorobanRpc } = await import('@stellar/stellar-sdk');
+      jest.spyOn(SorobanRpc, 'Server').mockImplementation(() => ({
+        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 12345 }),
+      }) as any);
+
+      const ledger = await client.connect();
+      expect(typeof ledger).toBe('number');
+      expect(ledger).toBe(12345);
+      expect(client.isConnected()).toBe(true);
     });
   });
 });

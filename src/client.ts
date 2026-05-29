@@ -26,9 +26,10 @@
  * ```
  */
 
-import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
+import { SorobanRpc, Keypair, xdr } from '@stellar/stellar-sdk';
 
-import type { NetworkConfig } from './types/index';
+import type { NetworkConfig, SimulationResult } from './types/index';
+import { buildContractCall, simulateTransaction } from './utils/transaction';
 import { TokenModule } from './modules/token';
 import { EscrowModule } from './modules/escrow';
 import { DisputeModule } from './modules/dispute';
@@ -119,15 +120,10 @@ export class VeriTixClient {
    * ```
    */
   async connect(): Promise<number> {
-    // TODO: implement
-    // Suggested steps:
-    //   1. new SorobanRpc.Server(this.config.rpcUrl, { allowHttp: false })
-    //   2. server.getLatestLedger() to verify connectivity
-    //   3. Store server reference; set this.connected = true
-    //   4. Return latestLedger.sequence
-    void SorobanRpc;
-    this.connected = true; // placeholder so TypeScript doesn't warn
-    throw new Error('VeriTixClient.connect: not implemented');
+    this.server = new SorobanRpc.Server(this.config.rpcUrl, { allowHttp: false });
+    const ledger = await this.server.getLatestLedger();
+    this.connected = true;
+    return ledger.sequence;
   }
 
   /**
@@ -135,6 +131,70 @@ export class VeriTixClient {
    */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  // -------------------------------------------------------------------------
+  // Simulation  (#77)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Dry-runs any contract method without submitting a transaction.
+   * Works without a `Keypair` — no XLM is spent.
+   *
+   * @param method - Contract function name to invoke.
+   * @param args   - Ordered XDR `ScVal` arguments.
+   * @returns A {@link SimulationResult} with the return value and estimated fee.
+   *
+   * @example
+   * ```ts
+   * const result = await client.simulate('get_escrow', [nativeToScVal(1n, { type: 'u64' })]);
+   * if (result.success) console.log('Return value:', result.returnValue);
+   * ```
+   */
+  async simulate(method: string, args: xdr.ScVal[]): Promise<SimulationResult> {
+    if (!this.connected) {
+      throw new Error('VeriTixClient: call connect() before simulate()');
+    }
+
+    try {
+      // Use a throwaway source account (simulation does not require a real funded account)
+      const { Account } = await import('@stellar/stellar-sdk');
+      const dummyKeypair = Keypair.random();
+      const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+      const tx = await buildContractCall(
+        this.server,
+        sourceAccount,
+        this.config.contractId,
+        method,
+        args,
+        this.config.networkPassphrase,
+      );
+
+      const { transaction, simulatedFee } = await simulateTransaction(this.server, tx);
+
+      // Extract the return value from the simulation result XDR if available
+      const rawResult = await this.server.simulateTransaction(tx);
+      const returnValue =
+        SorobanRpc.Api.isSimulationSuccess(rawResult) && rawResult.result
+          ? rawResult.result.retval
+          : undefined;
+
+      void transaction; // assembled tx not needed for simulate-only path
+
+      return {
+        success: true,
+        returnValue,
+        estimatedFee: simulatedFee,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        returnValue: undefined,
+        estimatedFee: '0',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   // -------------------------------------------------------------------------
